@@ -10,7 +10,7 @@ on:
 
 jobs:
   publish:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Windows]
 
     permissions:
       contents: read
