@@ -1,4 +1,11 @@
-# AGENTS
+# Trash Cleaner — Development Conventions
+
+## Overview
+CLI tool that deletes, archives, or marks-as-read trash/spam emails from Gmail and Outlook based on configurable keyword rules.
+
+## Environment
+- **Node.js >= 18.0.0** required
+- TypeScript source compiled via `tsx` (no separate build step)
 
 ## Build & Test
 
@@ -32,6 +39,31 @@ The codebase uses a **factory pattern** throughout. `TrashCleanerFactory`, `Gmai
 **Multi-account:** The `--account` flag selects which credential/token files to use. Default account uses standard file names; named accounts use suffixed files (e.g., `gmail.credentials.work.json`).
 
 **Config validation:** `keywords.json` is validated at load time with clear error messages including the entry index.
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `lib/cli.ts` | CLI entrypoint — parses flags/subcommands, wires components |
+| `lib/trash-cleaner.ts` | Core rule engine — keyword validation, text normalization, matching |
+| `lib/client/email-client.ts` | Base email model + abstract client/factory |
+| `lib/client/gmail-client.ts` | Gmail OAuth flow — token load/save/refresh |
+| `lib/client/outlook-client.ts` | Outlook MSAL auth — silent token → device-code fallback |
+| `lib/client/imap-client.ts` | IMAP client (basic mail fetch/action) |
+| `lib/store/file-system-config-store.ts` | Config read/write with YAML backward-compat |
+| `lib/store/secure-config-store.ts` | Sensitive keys → OS keychain, others → files |
+| `lib/utils/retry.ts` | Exponential backoff for 429/5xx and network errors |
+
+## Gotchas
+
+- **OAuth token handling differs by provider**: Gmail stores tokens as plain JSON files; Outlook uses MSAL cache plugin with persistence callbacks — don't mix the patterns
+- **`keywords.json` validation is strict**: errors include the entry index — invalid entries fail the entire load, not just that rule
+- **FileSystemConfigStore has YAML backward-compat**: `.json` config keys may actually load from YAML files — don't assume format from extension
+- **Diacritics normalization**: emails are normalized with `diacriticless` before keyword matching — test keywords should account for this
+- **`--dry-run` mode**: doesn't actually delete/archive — useful for testing but easy to forget when debugging "why didn't it work"
+- **Multi-account file naming**: default account uses standard filenames; named accounts use suffixed files (e.g., `gmail.credentials.work.json`)
+- **Retry logic**: `retry.ts` handles 429/5xx with exponential backoff — don't add redundant retry in calling code
+- **SecureConfigStore**: sensitive creds route through OS keychain — tests must mock this or use `FileSystemConfigStore` directly
 
 ## Conventions
 
