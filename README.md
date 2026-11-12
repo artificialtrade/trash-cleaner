@@ -406,6 +406,28 @@ npm run typecheck  # Run JSDoc type checking
 npm run coverage   # Generate coverage report
 ```
 
+## Mail Review Desktop Prototype (Milestone 1)
+
+This repository now also includes a separate Python desktop prototype at:
+
+- `/home/runner/work/trash-cleaner/trash-cleaner/mail_review`
+- launcher: `/home/runner/work/trash-cleaner/trash-cleaner/mail_review_app.py`
+
+It is designed as a migration path from legacy CSV/Tkinter review workflows while preserving the existing Node.js CLI behavior.
+
+Current Milestone 1 capabilities:
+
+- offline demo data for Gmail, iCloud, and Outlook-style records
+- `Email_evidence.csv` import with UTF-8 BOM handling
+- sender-domain grouping
+- search and selection controls
+- review-selection window
+- stale detail clearing when changing groups/filters
+- persistent bottom action bar that remains visible on smaller screens
+- live mailbox-changing actions disabled
+
+Windows setup instructions: `docs/windows-mail-review-setup.md`
+
 ## Releasing
 
 Releases are automated via GitHub Actions. To publish a new version:
