@@ -1,0 +1,6 @@
+Mailbox scanned,Folder,UID,Sender name (unverified),Sender,Sender domain,Date,Subject,To,Cc,X-Original-To,Delivered-To,Recipient grouping (provisional),Grouping basis,Message-ID,Unsubscribe header (unverified)
+Gmail Personal,INBOX,101,Shop Today,offers@shop-world.example,shop-world.example,2026-11-01 09:30:00+0000,Weekend offers,me@example.com,,me@example.com,me@example.com,personal,to,<msg-101@example.com>,<mailto:unsubscribe@shop-world.example>
+iCloud Personal,Inbox,555,Cloud Storage,notice@icloud-storage.example,icloud-storage.example,2026-10-27 12:45:00+0000,Storage reminder,me@icloud.example,,me@icloud.example,me@icloud.example,personal,to,<msg-555@example.com>,
+Outlook Work,Inbox,802,Travel Desk,bookings@travel-office.example,travel-office.example,2026-09-12 05:22:00+0000,Itinerary update,me@company.example,,me@company.example,me@company.example,work,to,<msg-802@example.com>,
+Gmail Personal,Promotions,803,Shop Today,offers@shop-world.example,shop-world.example,2026-08-01 11:10:00+0000,Flash sale announcement,me@example.com,,me@example.com,me@example.com,personal,to,<msg-803@example.com>,<mailto:unsubscribe@shop-world.example>
+Outlook Work,Junk Email,812,System Alert,alerts@ops-monitor.example,ops-monitor.example,2026-07-01 19:00:00+0000,Status digest,me@company.example,,me@company.example,me@company.example,work,to,<msg-812@example.com>,

@@ -10,3 +10,12 @@ action-log.json
 .vscode
 .nyc_output
 coverage/dist/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+.env.*
+mail_review_data/
+mail_review.db
+reports/
+logs/
