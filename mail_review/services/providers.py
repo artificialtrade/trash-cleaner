@@ -63,6 +63,11 @@ class MailProvider(ABC):
     def restore(self, message: MessageRecord) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    def apply_action(self, action: str, message: MessageRecord) -> None:
+        """Apply one supported non-destructive mailbox action."""
+        raise NotImplementedError
+
     def disconnect(self) -> None:
         """Release provider resources."""
 
@@ -193,6 +198,20 @@ class GmailProvider(MailProvider):
     def restore(self, message: MessageRecord) -> None:
         self.service.users().messages().untrash(userId="me", id=message.raw["gmail_id"]).execute()
 
+    def apply_action(self, action: str, message: MessageRecord) -> None:
+        message_id = message.raw["gmail_id"]
+        if action == "archive":
+            body = {"removeLabelIds": ["INBOX"]}
+        elif action == "important":
+            body = {"addLabelIds": ["IMPORTANT"]}
+        elif action == "flag":
+            body = {"addLabelIds": ["STARRED"]}
+        elif action == "mark-read":
+            body = {"removeLabelIds": ["UNREAD"]}
+        else:
+            raise ValueError(f"Unsupported Gmail action: {action}")
+        self.service.users().messages().modify(userId="me", id=message_id, body=body).execute()
+
 
 class OutlookProvider(MailProvider):
     provider_name = "Outlook"
@@ -202,6 +221,7 @@ class OutlookProvider(MailProvider):
         self.token: dict | None = None
         self.email_address = ""
         self.deleted_folder_id = ""
+        self.archive_folder_id = ""
 
     def authenticate(self) -> str:
         import msal
@@ -250,6 +270,9 @@ class OutlookProvider(MailProvider):
         folders.raise_for_status()
         self.deleted_folder_id = next(
             (item["id"] for item in folders.json().get("value", []) if item.get("displayName") == "Deleted Items"), ""
+        )
+        self.archive_folder_id = next(
+            (item["id"] for item in folders.json().get("value", []) if item.get("displayName") == "Archive"), ""
         )
         return self.email_address
 
@@ -305,6 +328,36 @@ class OutlookProvider(MailProvider):
             f"https://graph.microsoft.com/v1.0/me/messages/{quote(message.raw['outlook_id'])}/move",
             headers=self._headers(), json={"destinationId": message.raw["folder_id"]}, timeout=30,
         )
+        response.raise_for_status()
+
+    def apply_action(self, action: str, message: MessageRecord) -> None:
+        import requests
+
+        message_id = quote(message.raw["outlook_id"])
+        if action == "archive":
+            if not self.archive_folder_id:
+                raise RuntimeError("The Outlook Archive folder was not found.")
+            response = requests.post(
+                f"https://graph.microsoft.com/v1.0/me/messages/{message_id}/move",
+                headers=self._headers(), json={"destinationId": self.archive_folder_id}, timeout=30,
+            )
+        elif action == "important":
+            response = requests.patch(
+                f"https://graph.microsoft.com/v1.0/me/messages/{message_id}",
+                headers=self._headers(), json={"importance": "high"}, timeout=30,
+            )
+        elif action == "flag":
+            response = requests.patch(
+                f"https://graph.microsoft.com/v1.0/me/messages/{message_id}",
+                headers=self._headers(), json={"flag": {"flagStatus": "flagged"}}, timeout=30,
+            )
+        elif action == "mark-read":
+            response = requests.patch(
+                f"https://graph.microsoft.com/v1.0/me/messages/{message_id}",
+                headers=self._headers(), json={"isRead": True}, timeout=30,
+            )
+        else:
+            raise ValueError(f"Unsupported Outlook action: {action}")
         response.raise_for_status()
 
 
@@ -416,6 +469,38 @@ class ICloudProvider(MailProvider):
 
     def restore(self, message: MessageRecord) -> None:
         self._move(message, message.raw["folder"])
+
+    def apply_action(self, action: str, message: MessageRecord) -> None:
+        self.connection.select(f'"{message.raw["folder"]}"')
+        uid = message.raw["uid"]
+        if action == "archive":
+            archive = self._find_folder({"archive", "all mail"})
+            if not archive:
+                raise RuntimeError("The iCloud Archive folder was not found.")
+            status, _ = self.connection.uid("copy", uid, f'"{archive}"')
+            if status != "OK":
+                raise RuntimeError("Unable to archive the iCloud message.")
+            self.connection.uid("store", uid, "+FLAGS", "(\\Deleted)")
+            self.connection.expunge()
+        elif action == "flag":
+            self.connection.uid("store", uid, "+FLAGS", "(\\Flagged)")
+        elif action == "important":
+            self.connection.uid("store", uid, "+FLAGS", "(\\Flagged)")
+        elif action == "mark-read":
+            self.connection.uid("store", uid, "+FLAGS", "(\\Seen)")
+        else:
+            raise ValueError(f"Unsupported iCloud action: {action}")
+
+    def _find_folder(self, names: set[str]) -> str:
+        status, boxes = self.connection.list()
+        if status != "OK":
+            return ""
+        for box in boxes or []:
+            decoded = box.decode(errors="replace")
+            name = decoded.rsplit(' "/" ', 1)[-1].strip('"')
+            if name.lower() in names:
+                return name
+        return ""
 
     def _move(self, message: MessageRecord, destination: str) -> None:
         self.connection.select(f'"{message.raw["folder"]}"')

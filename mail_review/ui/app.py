@@ -3,6 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 import queue
 import threading
+from dataclasses import replace
 from tkinter import filedialog, messagebox, ttk
 
 from mail_review.models import MessageRecord
@@ -16,6 +17,13 @@ from mail_review.state import MessageSelectionState
 
 
 ACCOUNT_MODES = ("Gmail", "iCloud", "Outlook", "Demo", "CSV Import")
+MAIL_ACTIONS = (
+    ("Move to Trash / Bin", "trash"),
+    ("Archive", "archive"),
+    ("Mark important", "important"),
+    ("Flag / star", "flag"),
+    ("Mark as read", "mark-read"),
+)
 
 
 class MailReviewApp:
@@ -56,6 +64,7 @@ class MailReviewApp:
         self.preview_subject_var = tk.StringVar(value="")
         self.preview_sender_var = tk.StringVar(value="")
         self.preview_meta_var = tk.StringVar(value="")
+        self.action_var = tk.StringVar(value=MAIL_ACTIONS[0][0])
 
         self._build_layout()
         self._bind_events()
@@ -118,7 +127,9 @@ class MailReviewApp:
         sidebar.rowconfigure(1, weight=1)
         sidebar.columnconfigure(0, weight=1)
         ttk.Label(sidebar, text="Sender groups").grid(row=0, column=0, sticky="w")
-        self.group_list = tk.Listbox(sidebar, exportselection=False, activestyle="none")
+        self.group_list = tk.Listbox(
+            sidebar, exportselection=False, activestyle="none", selectmode=tk.EXTENDED
+        )
         self.group_list.grid(row=1, column=0, sticky="nsew")
 
         panel = ttk.Frame(splitter)
@@ -126,7 +137,7 @@ class MailReviewApp:
         panel.columnconfigure(0, weight=1)
         ttk.Label(panel, textvariable=self.summary_var).grid(row=0, column=0, sticky="w", pady=(0, 4))
         columns = ("selected", "source", "folder", "sender", "subject", "date", "status")
-        self.message_table = ttk.Treeview(panel, columns=columns, show="headings", selectmode="browse")
+        self.message_table = ttk.Treeview(panel, columns=columns, show="headings", selectmode="extended")
         for col, width in (
             ("selected", 65), ("source", 85), ("folder", 110), ("sender", 240),
             ("subject", 350), ("date", 150), ("status", 85)
@@ -155,10 +166,19 @@ class MailReviewApp:
         ttk.Button(actions, text="Select sender group", command=self.select_sender_group).grid(row=0, column=2, padx=4)
         ttk.Button(actions, text="Clear selection", command=self.clear_selection).grid(row=0, column=3, padx=4)
         ttk.Button(actions, text="Review selection", command=self.review_selection).grid(row=0, column=4, padx=4)
-        ttk.Button(actions, text="Move selected to Trash", command=self.move_selected_to_trash).grid(row=0, column=5, padx=4)
-        ttk.Button(actions, text="Restore", command=self.restore_selected).grid(row=0, column=6, padx=4)
-        ttk.Button(actions, text="Undo", command=self.undo_last_action).grid(row=0, column=7, padx=4)
-        ttk.Button(actions, text="Recently trashed", command=self.show_recently_trashed).grid(row=0, column=8, padx=4)
+        ttk.Label(actions, text="Action").grid(row=0, column=5, padx=(8, 3))
+        self.action_selector = ttk.Combobox(
+            actions,
+            textvariable=self.action_var,
+            values=[label for label, _action in MAIL_ACTIONS],
+            state="readonly",
+            width=21,
+        )
+        self.action_selector.grid(row=0, column=6, padx=4)
+        ttk.Button(actions, text="Apply action", command=self.apply_selected_action).grid(row=0, column=7, padx=4)
+        ttk.Button(actions, text="Restore", command=self.restore_selected).grid(row=0, column=8, padx=4)
+        ttk.Button(actions, text="Undo", command=self.undo_last_action).grid(row=0, column=9, padx=4)
+        ttk.Button(actions, text="Recently trashed", command=self.show_recently_trashed).grid(row=0, column=10, padx=4)
         ttk.Label(self.root, textvariable=self.status_var, anchor="w", relief=tk.SUNKEN).grid(
             row=2, column=0, sticky="ew"
         )
@@ -168,8 +188,7 @@ class MailReviewApp:
             variable.trace_add("write", lambda *_: self.apply_filters(clear_preview=True))
         self.account_selector.bind("<<ComboboxSelected>>", self._on_account_change)
         self.group_list.bind("<<ListboxSelect>>", lambda _event: self.apply_filters(clear_preview=True))
-        self.message_table.bind("<<TreeviewSelect>>", self._on_message_focus)
-        self.message_table.bind("<Double-1>", self._toggle_selected_row)
+        self.message_table.bind("<<TreeviewSelect>>", self._on_message_selection)
 
     def _on_account_change(self, _event: tk.Event) -> None:
         self.cancel_loading()
@@ -348,6 +367,14 @@ class MailReviewApp:
             return value
         return value.rsplit(" <", 1)[-1].split("> (", 1)[0]
 
+    def _selected_group_names(self) -> list[str]:
+        names = []
+        for index in self.group_list.curselection():
+            value = self.group_list.get(index)
+            if value != "All senders":
+                names.append(value.rsplit(" <", 1)[-1].split("> (", 1)[0])
+        return names
+
     def apply_filters(self, clear_preview: bool) -> None:
         self.visible_messages = filter_messages(
             self.messages,
@@ -396,18 +423,19 @@ class MailReviewApp:
             f"Message ID: {message.message_id or message.message_key}"
         )
 
+    def _on_message_selection(self, event: tk.Event) -> None:
+        self._on_message_focus(event)
+        visible_keys = {message.message_key for message in self.visible_messages}
+        selected_keys = set(self.message_table.selection())
+        self.selection_state.selected_keys.difference_update(visible_keys - selected_keys)
+        self.selection_state.selected_keys.update(selected_keys)
+        self._update_selection_label()
+
     def clear_preview(self) -> None:
         self.selection_state.clear_preview()
         self.preview_subject_var.set("")
         self.preview_sender_var.set("")
         self.preview_meta_var.set("")
-
-    def _toggle_selected_row(self, _event: tk.Event) -> None:
-        selected = self.message_table.selection()
-        if selected and selected[0] in self.message_index:
-            self.selection_state.toggle_message(self.message_index[selected[0]])
-            self._populate_message_table()
-            self._update_selection_label()
 
     def select_all_visible(self) -> None:
         self.selection_state.select_visible(self.visible_messages)
@@ -415,13 +443,15 @@ class MailReviewApp:
         self._update_selection_label()
 
     def select_sender_group(self) -> None:
-        group_name = self._selected_group_name()
-        if group_name in {"All senders", "All sender domains"}:
+        group_names = self._selected_group_names()
+        if not group_names:
             self.selection_state.select_visible(self.visible_messages)
         else:
-            group = group_by_sender(self.messages).get(group_name)
-            if group:
-                self.selection_state.select_visible(list(group.messages))
+            groups = group_by_sender(self.messages)
+            for group_name in group_names:
+                group = groups.get(group_name)
+                if group:
+                    self.selection_state.select_visible(list(group.messages))
         self._populate_message_table()
         self._update_selection_label()
 
@@ -437,6 +467,10 @@ class MailReviewApp:
     def _selected_messages(self) -> list[MessageRecord]:
         return [self.message_index[key] for key in self.selection_state.selected_keys if key in self.message_index]
 
+    def _selected_action(self) -> tuple[str, str]:
+        label = self.action_var.get()
+        return next((action for action in MAIL_ACTIONS if action[0] == label), MAIL_ACTIONS[0])
+
     def review_selection(self) -> None:
         selected = self._selected_messages()
         if not selected:
@@ -451,24 +485,28 @@ class MailReviewApp:
             else "Live mailbox messages will be changed only after confirmation.",
         )
 
-    def move_selected_to_trash(self) -> None:
+    def apply_selected_action(self) -> None:
         selected = self._selected_messages()
         if not selected:
-            messagebox.showinfo("Move to Trash", "No messages are selected.")
+            messagebox.showinfo("Bulk action", "Select one or more emails first.")
             return
-        destination = {
+        label, action = self._selected_action()
+        if action == "trash":
+            destination = {
             "Gmail": "Gmail Trash",
             "iCloud": "iCloud Trash / Deleted Messages",
             "Outlook": "Outlook Deleted Items",
-        }.get(self.account_mode, "simulated Trash")
+            }.get(self.account_mode, "simulated Trash")
+        else:
+            destination = label
         if len(selected) > 100 and not messagebox.askyesno(
             "Large bulk action",
             f"This will move {len(selected)} messages. Continue?",
         ):
             return
         if not messagebox.askyesno(
-            "Confirm move to Trash",
-            f"Move {len(selected)} email(s) to {destination}?\n"
+            "Confirm bulk action",
+            f"{label} for {len(selected)} email(s)?\n"
             f"Senders: {', '.join(sorted({m.sender_email for m in selected}))}\n"
             f"Folders: {', '.join(sorted({m.folder for m in selected}))}",
         ):
@@ -481,36 +519,48 @@ class MailReviewApp:
             succeeded, failed = [], []
             for message in selected:
                 try:
-                    provider.move_to_trash(message)
+                    if action == "trash":
+                        provider.move_to_trash(message)
+                    else:
+                        provider.apply_action(action, message)
                     succeeded.append(message)
                 except Exception:
                     failed.append(message)
-            self.recently_trashed.update({message.message_key: message for message in succeeded})
-            self.last_live_moved = [message.message_key for message in succeeded]
-            ActionLog().append(succeeded, "move-to-trash", "success")
-            ActionLog().append(failed, "move-to-trash", "failure")
+            if action == "trash":
+                self.recently_trashed.update({message.message_key: message for message in succeeded})
+                self.last_live_moved = [message.message_key for message in succeeded]
+            ActionLog().append(succeeded, action, "success")
+            ActionLog().append(failed, action, "failure")
             if failed:
                 messagebox.showwarning(
                     "Partial move",
                     f"{len(succeeded)} moved successfully; {len(failed)} failed. "
                     "Reconnect and retry the failed messages.",
                 )
-            status = f"Moved {len(succeeded)} live message(s) to {destination}."
+            status = f"Applied {label} to {len(succeeded)} live message(s)."
             if failed:
                 status += f" {len(failed)} failed."
             self.status_var.set(status)
         else:
-            self.trash_store.move_to_trash(selected)
-            self.recently_trashed.update({message.message_key: message for message in selected})
-            self.last_live_moved = []
+            if action == "trash":
+                self.trash_store.move_to_trash(selected)
+                self.recently_trashed.update({message.message_key: message for message in selected})
+                self.last_live_moved = []
+            ActionLog().append(selected, action, "simulated")
             self.status_var.set(
-                f"Simulated move of {len(selected)} email(s) to Trash; no real email was changed."
+                f"Simulated {label.lower()} for {len(selected)} email(s); no real email was changed."
             )
-        self.messages = [message for message in self.messages if message.message_key not in self.selection_state.selected_keys]
-        self._set_messages(
-            "live mailbox after Trash" if any(message.is_live for message in selected)
-            else "offline data after simulated Trash"
-        )
+        if action in {"trash", "archive"}:
+            self.messages = [
+                message for message in self.messages
+                if message.message_key not in self.selection_state.selected_keys
+            ]
+        elif action == "mark-read":
+            self.messages = [
+                replace(message, is_read=True) if message.message_key in self.selection_state.selected_keys else message
+                for message in self.messages
+            ]
+        self._set_messages(f"after {label.lower()}")
 
     def restore_selected(self) -> None:
         self._restore_keys(list(self.selection_state.selected_keys))

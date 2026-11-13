@@ -118,6 +118,8 @@ pytest test_mail_review -q
 - Confirmation, simulated Trash, restore/Undo, Recently trashed, and external action log.
 - Gmail OAuth, Microsoft OAuth, and iCloud IMAP app-specific-password sign-in.
 - Background mailbox loading with pause, resume, and cancel controls.
+- Ctrl/Shift multi-select for individual emails, multi-select sender groups, and a bulk-action
+  dropdown for Trash/Bin, Archive, Important, Flag/Star, and Mark as read.
 
 Demo and CSV actions never change a real email account. Action history is stored under the user's application data
 directory (`%LOCALAPPDATA%\\TrashCleaner\\mail-review` on Windows).
