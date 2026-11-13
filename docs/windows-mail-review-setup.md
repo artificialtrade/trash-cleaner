@@ -120,6 +120,10 @@ pytest test_mail_review -q
 - Background mailbox loading with pause, resume, and cancel controls.
 - Ctrl/Shift multi-select for individual emails, multi-select sender groups, and a bulk-action
   dropdown for Trash/Bin, Archive, Important, Flag/Star, and Mark as read.
+- Automatic review categories (Promotions, Social, Finance, Work, Alerts, and Other) with a
+  category filter.
+- Explicit Unsubscribe and Move to folder actions. Unsubscribe opens the sender-provided
+  List-Unsubscribe link for review; it never silently unsubscribes or changes a mailbox.
 
 Demo and CSV actions never change a real email account. Action history is stored under the user's application data
 directory (`%LOCALAPPDATA%\\TrashCleaner\\mail-review` on Windows).

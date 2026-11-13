@@ -63,6 +63,7 @@ def filter_messages(
     folder: str | None = None,
     read_status: str = "all",
     attachments: str = "all",
+    category: str = "All categories",
 ) -> list[MessageRecord]:
     filtered = messages
     if group_name and group_name not in {"All sender domains", "All senders"}:
@@ -81,6 +82,8 @@ def filter_messages(
         filtered = [item for item in filtered if item.has_attachments]
     elif attachments == "without attachments":
         filtered = [item for item in filtered if not item.has_attachments]
+    if category and category != "All categories":
+        filtered = [item for item in filtered if item.category == category]
 
     text = search_text.strip().lower()
     if not text:

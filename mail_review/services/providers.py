@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import threading
+import webbrowser
 from abc import ABC, abstractmethod
 from datetime import datetime
 from email.header import decode_header, make_header
@@ -17,6 +18,7 @@ from urllib.parse import quote
 from mail_review.models import MessageRecord
 from mail_review.services.action_log import app_data_dir
 from mail_review.services.credentials import CredentialStore
+from mail_review.services.categorization import categorize_message
 
 ProgressCallback = Callable[[int, int | None, list[MessageRecord]], None]
 
@@ -67,6 +69,23 @@ class MailProvider(ABC):
     def apply_action(self, action: str, message: MessageRecord) -> None:
         """Apply one supported non-destructive mailbox action."""
         raise NotImplementedError
+
+    def move_to_folder(self, message: MessageRecord, folder: str) -> None:
+        raise NotImplementedError
+
+    def unsubscribe(self, message: MessageRecord) -> None:
+        """Open the sender's official unsubscribe URL or mailto request."""
+
+        link = message.raw.get("unsubscribe", "").strip()
+        if not link:
+            raise RuntimeError("No List-Unsubscribe link was provided by this sender.")
+        if link.startswith("<") and link.endswith(">"):
+            link = link[1:-1]
+        links = [item.strip().strip("<>") for item in link.split(",")]
+        target = next((item for item in links if item.startswith(("https://", "http://", "mailto:"))), "")
+        if not target:
+            raise RuntimeError("The sender's unsubscribe header did not contain a supported link.")
+        webbrowser.open(target)
 
     def disconnect(self) -> None:
         """Release provider resources."""
@@ -150,7 +169,7 @@ class GmailProvider(MailProvider):
                     cancel.wait(0.1)
                 item = self.service.users().messages().get(
                     userId="me", id=ref["id"], format="metadata",
-                    metadataHeaders=["From", "To", "Cc", "Subject", "Date", "Message-ID"],
+                    metadataHeaders=["From", "To", "Cc", "Subject", "Date", "Message-ID", "List-Unsubscribe"],
                 ).execute()
                 messages.append(self._record(item))
                 if len(messages) == 1 or len(messages) % 50 == 0:
@@ -190,7 +209,11 @@ class GmailProvider(MailProvider):
             date_text=date_text, received_at=received, source="live",
             message_id=_header_value(headers, "message-id") or item["id"],
             thread_id=item.get("threadId", ""), is_read="UNREAD" not in labels,
-            raw={"gmail_id": item["id"], "labels": ",".join(labels)},
+            raw={
+                "gmail_id": item["id"], "labels": ",".join(labels),
+                "unsubscribe": _header_value(headers, "list-unsubscribe"),
+            },
+            category=categorize_message(sender, _decode(_header_value(headers, "subject")), ", ".join(folders)),
         )
 
     def move_to_trash(self, message: MessageRecord) -> None:
@@ -200,6 +223,9 @@ class GmailProvider(MailProvider):
         self.service.users().messages().untrash(userId="me", id=message.raw["gmail_id"]).execute()
 
     def apply_action(self, action: str, message: MessageRecord) -> None:
+        if action == "unsubscribe":
+            self.unsubscribe(message)
+            return
         message_id = message.raw["gmail_id"]
         if action == "archive":
             body = {"removeLabelIds": ["INBOX"]}
@@ -212,6 +238,17 @@ class GmailProvider(MailProvider):
         else:
             raise ValueError(f"Unsupported Gmail action: {action}")
         self.service.users().messages().modify(userId="me", id=message_id, body=body).execute()
+
+    def move_to_folder(self, message: MessageRecord, folder: str) -> None:
+        labels = self.service.users().labels().list(userId="me").execute().get("labels", [])
+        label = next((item for item in labels if item.get("name", "").lower() == folder.lower()), None)
+        if not label:
+            label = self.service.users().labels().create(
+                userId="me", body={"name": folder}
+            ).execute()
+        self.service.users().messages().modify(
+            userId="me", id=message.raw["gmail_id"], body={"addLabelIds": [label["id"]]}
+        ).execute()
 
 
 class OutlookProvider(MailProvider):
@@ -283,7 +320,7 @@ class OutlookProvider(MailProvider):
     def load_messages(self, progress, cancel, pause) -> list[MessageRecord]:
         import requests
 
-        url = "https://graph.microsoft.com/v1.0/me/messages?$top=100&$select=id,conversationId,subject,receivedDateTime,from,toRecipients,ccRecipients,parentFolderId,isRead,hasAttachments"
+        url = "https://graph.microsoft.com/v1.0/me/messages?$top=100&$select=id,conversationId,subject,receivedDateTime,from,toRecipients,ccRecipients,parentFolderId,isRead,hasAttachments,internetMessageHeaders"
         messages: list[MessageRecord] = []
         while url and not cancel.is_set():
             while pause.is_set() and not cancel.is_set():
@@ -311,7 +348,14 @@ class OutlookProvider(MailProvider):
             sender_domain=domain, subject=item.get("subject") or "(no subject)", to_value="",
             cc_value="", date_text=received_text, received_at=received, source="live",
             message_id=item["id"], thread_id=item.get("conversationId", ""), is_read=item.get("isRead", False),
-            has_attachments=item.get("hasAttachments", False), raw={"outlook_id": item["id"], "folder_id": item.get("parentFolderId", "")},
+            has_attachments=item.get("hasAttachments", False), raw={
+                "outlook_id": item["id"], "folder_id": item.get("parentFolderId", ""),
+                "unsubscribe": next(
+                    (header.get("value", "") for header in item.get("internetMessageHeaders", [])
+                     if header.get("name", "").lower() == "list-unsubscribe"), ""
+                ),
+            },
+            category=categorize_message(sender, item.get("subject") or "", item.get("parentFolderId", "Unknown")),
         )
 
     def move_to_trash(self, message: MessageRecord) -> None:
@@ -335,6 +379,9 @@ class OutlookProvider(MailProvider):
     def apply_action(self, action: str, message: MessageRecord) -> None:
         import requests
 
+        if action == "unsubscribe":
+            self.unsubscribe(message)
+            return
         message_id = quote(message.raw["outlook_id"])
         if action == "archive":
             if not self.archive_folder_id:
@@ -360,6 +407,26 @@ class OutlookProvider(MailProvider):
             )
         else:
             raise ValueError(f"Unsupported Outlook action: {action}")
+        response.raise_for_status()
+
+    def move_to_folder(self, message: MessageRecord, folder: str) -> None:
+        import requests
+
+        folders = requests.get(
+            "https://graph.microsoft.com/v1.0/me/mailFolders?$top=100",
+            headers=self._headers(), timeout=30,
+        )
+        folders.raise_for_status()
+        target = next(
+            (item for item in folders.json().get("value", [])
+             if item.get("displayName", "").lower() == folder.lower()), None
+        )
+        if not target:
+            raise RuntimeError(f"Outlook folder not found: {folder}")
+        response = requests.post(
+            f"https://graph.microsoft.com/v1.0/me/messages/{quote(message.raw['outlook_id'])}/move",
+            headers=self._headers(), json={"destinationId": target["id"]}, timeout=30,
+        )
         response.raise_for_status()
 
 
@@ -436,7 +503,7 @@ class ICloudProvider(MailProvider):
                 if cancel.is_set():
                     break
                 status, fetched = self.connection.uid(
-                    "fetch", uid, "(BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID)] FLAGS)"
+                    "fetch", uid, "(BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID LIST-UNSUBSCRIBE)] FLAGS)"
                 )
                 if status == "OK":
                     record = self._record(folder, uid.decode(), fetched)
@@ -464,7 +531,8 @@ class ICloudProvider(MailProvider):
             to_value=raw_headers.get("to", ""), cc_value=raw_headers.get("cc", ""),
             date_text=date_text, received_at=received, source="live",
             message_id=raw_headers.get("message-id", "") or uid, is_read=b"\\Seen" in flags,
-            raw={"folder": folder, "uid": uid},
+            raw={"folder": folder, "uid": uid, "unsubscribe": raw_headers.get("list-unsubscribe", "")},
+            category=categorize_message(sender, raw_headers.get("subject", ""), folder),
         )
 
     def move_to_trash(self, message: MessageRecord) -> None:
@@ -476,7 +544,9 @@ class ICloudProvider(MailProvider):
     def apply_action(self, action: str, message: MessageRecord) -> None:
         self.connection.select(f'"{message.raw["folder"]}"')
         uid = message.raw["uid"]
-        if action == "archive":
+        if action == "unsubscribe":
+            self.unsubscribe(message)
+        elif action == "archive":
             archive = self._find_folder({"archive", "all mail"})
             if not archive:
                 raise RuntimeError("The iCloud Archive folder was not found.")
@@ -493,6 +563,14 @@ class ICloudProvider(MailProvider):
             self.connection.uid("store", uid, "+FLAGS", "(\\Seen)")
         else:
             raise ValueError(f"Unsupported iCloud action: {action}")
+
+    def move_to_folder(self, message: MessageRecord, folder: str) -> None:
+        self.connection.select(f'"{message.raw["folder"]}"')
+        status, _ = self.connection.uid("copy", message.raw["uid"], f'"{folder}"')
+        if status != "OK":
+            raise RuntimeError(f"Unable to copy the iCloud message to {folder}.")
+        self.connection.uid("store", message.raw["uid"], "+FLAGS", "(\\Deleted)")
+        self.connection.expunge()
 
     def _find_folder(self, names: set[str]) -> str:
         status, boxes = self.connection.list()

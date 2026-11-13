@@ -4,7 +4,7 @@ import tkinter as tk
 import queue
 import threading
 from dataclasses import replace
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from mail_review.models import MessageRecord
 from mail_review.services.action_log import ActionLog
@@ -19,6 +19,8 @@ from mail_review.state import MessageSelectionState
 ACCOUNT_MODES = ("Gmail", "iCloud", "Outlook", "Demo", "CSV Import")
 MAIL_ACTIONS = (
     ("Move to Trash / Bin", "trash"),
+    ("Unsubscribe", "unsubscribe"),
+    ("Move to folder...", "folder"),
     ("Archive", "archive"),
     ("Mark important", "important"),
     ("Flag / star", "flag"),
@@ -57,6 +59,7 @@ class MailReviewApp:
         self.folder_var = tk.StringVar(value="All folders")
         self.read_var = tk.StringVar(value="all")
         self.attachment_var = tk.StringVar(value="all")
+        self.category_var = tk.StringVar(value="All categories")
         self.status_var = tk.StringVar(value="Load demo data or import Email_evidence.csv to begin.")
         self.summary_var = tk.StringVar(value="No messages loaded")
         self.active_account_var = tk.StringVar(value="")
@@ -113,6 +116,11 @@ class MailReviewApp:
             state="readonly",
             width=18,
         ).grid(row=0, column=9)
+        ttk.Label(controls, text="Category").grid(row=0, column=10, padx=(8, 3))
+        self.category_selector = ttk.Combobox(
+            controls, textvariable=self.category_var, state="readonly", width=16
+        )
+        self.category_selector.grid(row=0, column=11)
         self.load_progress = ttk.Progressbar(controls, mode="indeterminate", length=150)
         self.load_progress.grid(row=1, column=3, columnspan=2, sticky="ew", padx=(3, 0), pady=(6, 0))
         ttk.Button(controls, text="Pause", command=self.pause_loading).grid(row=1, column=5, padx=3, pady=(6, 0))
@@ -160,10 +168,10 @@ class MailReviewApp:
         panel.rowconfigure(1, weight=1)
         panel.columnconfigure(0, weight=1)
         ttk.Label(panel, textvariable=self.summary_var).grid(row=0, column=0, sticky="w", pady=(0, 4))
-        columns = ("selected", "source", "folder", "sender", "subject", "date", "status")
+        columns = ("selected", "source", "category", "folder", "sender", "subject", "date", "status")
         self.message_table = ttk.Treeview(panel, columns=columns, show="headings", selectmode="extended")
         for col, width in (
-            ("selected", 65), ("source", 85), ("folder", 110), ("sender", 240),
+            ("selected", 65), ("source", 85), ("category", 110), ("folder", 110), ("sender", 240),
             ("subject", 350), ("date", 150), ("status", 85)
         ):
             self.message_table.heading(col, text=col.capitalize())
@@ -198,7 +206,9 @@ class MailReviewApp:
         )
 
     def _bind_events(self) -> None:
-        for variable in (self.search_var, self.folder_var, self.read_var, self.attachment_var):
+        for variable in (
+            self.search_var, self.folder_var, self.read_var, self.attachment_var, self.category_var
+        ):
             variable.trace_add("write", lambda *_: self.apply_filters(clear_preview=True))
         self.account_selector.bind("<<ComboboxSelected>>", self._on_account_change)
         self.group_list.bind("<<ListboxSelect>>", lambda _event: self.apply_filters(clear_preview=True))
@@ -293,6 +303,7 @@ class MailReviewApp:
                     self.message_index = {item.message_key: item for item in self.messages}
                     self._refresh_groups()
                     self._refresh_folders()
+                    self._refresh_categories()
                     self.apply_filters(clear_preview=False)
                     self.status_var.set(f"Loaded {count} messages; loading continues...")
                 elif event[0] == "done":
@@ -365,6 +376,7 @@ class MailReviewApp:
         self.status_var.set(f"Loaded {len(self.messages)} messages from {source_label}.")
         self._refresh_groups()
         self._refresh_folders()
+        self._refresh_categories()
         self.apply_filters(clear_preview=True)
 
     def _refresh_groups(self) -> None:
@@ -391,6 +403,12 @@ class MailReviewApp:
         if self.folder_var.get() not in values:
             self.folder_var.set("All folders")
 
+    def _refresh_categories(self) -> None:
+        values = ["All categories", *sorted({message.category for message in self.messages})]
+        self.category_selector.configure(values=values)
+        if self.category_var.get() not in values:
+            self.category_var.set("All categories")
+
     def _selected_group_name(self) -> str:
         selected = self.group_list.curselection()
         if not selected:
@@ -416,6 +434,7 @@ class MailReviewApp:
             folder=self.folder_var.get(),
             read_status=self.read_var.get(),
             attachments=self.attachment_var.get(),
+            category=self.category_var.get(),
         )
         self._populate_message_table()
         self.summary_var.set(
@@ -434,7 +453,7 @@ class MailReviewApp:
                 values=(
                     "✓" if item.message_key in self.selection_state.selected_keys else "",
                     "CSV import" if item.source == "csv" else ("Live" if item.is_live else "Demo"),
-                    item.folder, f"{item.sender_name} <{item.sender_email}>", item.subject,
+                    item.category, item.folder, f"{item.sender_name} <{item.sender_email}>", item.subject,
                     item.date_text, "Read" if item.is_read else "Unread",
                 ),
             )
@@ -524,6 +543,15 @@ class MailReviewApp:
             messagebox.showinfo("Bulk action", "Select one or more emails first.")
             return
         label, action = self._selected_action()
+        target_folder = ""
+        if action == "folder":
+            target_folder = simpledialog.askstring(
+                "Move to folder", "Enter the destination folder or label:", parent=self.root
+            ) or ""
+            if not target_folder.strip():
+                return
+            label = f"Move to folder: {target_folder.strip()}"
+            action = "folder"
         if action == "trash":
             destination = {
             "Gmail": "Gmail Trash",
@@ -537,11 +565,19 @@ class MailReviewApp:
             f"This will move {len(selected)} messages. Continue?",
         ):
             return
-        if not messagebox.askyesno(
-            "Confirm bulk action",
+        prompt = (
             f"{label} for {len(selected)} email(s)?\n"
             f"Senders: {', '.join(sorted({m.sender_email for m in selected}))}\n"
-            f"Folders: {', '.join(sorted({m.folder for m in selected}))}",
+            f"Folders: {', '.join(sorted({m.folder for m in selected}))}"
+        )
+        if action == "unsubscribe":
+            prompt = (
+                "This will open the sender's official unsubscribe link for the selected messages.\n"
+                "Review each page before completing it.\n\n" + prompt
+            )
+        if not messagebox.askyesno(
+            "Confirm bulk action",
+            prompt,
         ):
             return
         if any(message.is_live for message in selected):
@@ -554,6 +590,8 @@ class MailReviewApp:
                 try:
                     if action == "trash":
                         provider.move_to_trash(message)
+                    elif action == "folder":
+                        provider.move_to_folder(message, target_folder.strip())
                     else:
                         provider.apply_action(action, message)
                     succeeded.append(message)
@@ -587,6 +625,12 @@ class MailReviewApp:
             self.messages = [
                 message for message in self.messages
                 if message.message_key not in self.selection_state.selected_keys
+            ]
+        elif action == "folder":
+            self.messages = [
+                replace(message, folder=target_folder.strip())
+                if message.message_key in self.selection_state.selected_keys else message
+                for message in self.messages
             ]
         elif action == "mark-read":
             self.messages = [

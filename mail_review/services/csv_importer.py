@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from mail_review.models import MessageRecord
+from mail_review.services.categorization import categorize_message
 
 
 DATE_FORMATS = (
@@ -112,6 +113,7 @@ def load_messages_from_csv(path: str | Path) -> list[MessageRecord]:
                     is_read=_as_bool(mapped.get("is_read", ""))
                     and not _as_unread(mapped.get("is_unread", "")),
                     has_attachments=_as_bool(mapped.get("has_attachments", "")),
+                    category=categorize_message(sender_email, subject, folder),
                 )
             )
     return records

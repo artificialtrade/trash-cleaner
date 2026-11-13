@@ -28,6 +28,7 @@ class MessageRecord:
     is_read: bool = False
     has_attachments: bool = False
     body_text: str = ""
+    category: str = "Other"
 
     @property
     def is_live(self) -> bool:
