@@ -18,7 +18,7 @@ from mail_review.models import MessageRecord
 from mail_review.services.action_log import app_data_dir
 from mail_review.services.credentials import CredentialStore
 
-ProgressCallback = Callable[[int, int | None], None]
+ProgressCallback = Callable[[int, int | None, list[MessageRecord]], None]
 
 
 def _header_value(headers: dict[str, str], name: str) -> str:
@@ -153,7 +153,8 @@ class GmailProvider(MailProvider):
                     metadataHeaders=["From", "To", "Cc", "Subject", "Date", "Message-ID"],
                 ).execute()
                 messages.append(self._record(item))
-                progress(len(messages), None)
+                if len(messages) == 1 or len(messages) % 50 == 0:
+                    progress(len(messages), None, messages[-50:])
             token = response.get("nextPageToken")
             if not token:
                 break
@@ -292,7 +293,8 @@ class OutlookProvider(MailProvider):
             data = response.json()
             for item in data.get("value", []):
                 messages.append(self._record(item))
-                progress(len(messages), None)
+                if len(messages) == 1 or len(messages) % 50 == 0:
+                    progress(len(messages), None, messages[-50:])
             url = data.get("@odata.nextLink")
         return messages
 
@@ -440,7 +442,8 @@ class ICloudProvider(MailProvider):
                     record = self._record(folder, uid.decode(), fetched)
                     if record:
                         messages.append(record)
-                        progress(len(messages), None)
+                        if len(messages) == 1 or len(messages) % 50 == 0:
+                            progress(len(messages), None, messages[-50:])
         return messages
 
     def _record(self, folder: str, uid: str, fetched: list) -> MessageRecord | None:

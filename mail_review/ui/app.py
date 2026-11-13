@@ -120,6 +120,27 @@ class MailReviewApp:
         ttk.Button(controls, text="Cancel loading", command=self.cancel_loading).grid(
             row=1, column=7, columnspan=2, padx=3, pady=(6, 0)
         )
+        ttk.Label(controls, text="Bulk action").grid(row=2, column=0, padx=(3, 8), pady=(6, 0), sticky="w")
+        self.action_selector = ttk.Combobox(
+            controls,
+            textvariable=self.action_var,
+            values=[label for label, _action in MAIL_ACTIONS],
+            state="readonly",
+            width=23,
+        )
+        self.action_selector.grid(row=2, column=1, columnspan=2, padx=3, pady=(6, 0), sticky="w")
+        ttk.Button(controls, text="Apply action", command=self.apply_selected_action).grid(
+            row=2, column=3, padx=3, pady=(6, 0), sticky="w"
+        )
+        ttk.Button(controls, text="Select visible", command=self.select_all_visible).grid(
+            row=2, column=4, padx=3, pady=(6, 0)
+        )
+        ttk.Button(controls, text="Clear selection", command=self.clear_selection).grid(
+            row=2, column=5, padx=3, pady=(6, 0)
+        )
+        ttk.Button(controls, text="Review selection", command=self.review_selection).grid(
+            row=2, column=6, padx=3, pady=(6, 0)
+        )
 
         splitter = ttk.Panedwindow(main_frame, orient=tk.HORIZONTAL)
         splitter.grid(row=2, column=0, sticky="nsew")
@@ -127,10 +148,13 @@ class MailReviewApp:
         sidebar.rowconfigure(1, weight=1)
         sidebar.columnconfigure(0, weight=1)
         ttk.Label(sidebar, text="Sender groups").grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            sidebar, text="Select group emails", command=self.select_sender_group
+        ).grid(row=0, column=1, padx=(6, 0), sticky="e")
         self.group_list = tk.Listbox(
             sidebar, exportselection=False, activestyle="none", selectmode=tk.EXTENDED
         )
-        self.group_list.grid(row=1, column=0, sticky="nsew")
+        self.group_list.grid(row=1, column=0, columnspan=2, sticky="nsew")
 
         panel = ttk.Frame(splitter)
         panel.rowconfigure(1, weight=1)
@@ -166,19 +190,9 @@ class MailReviewApp:
         ttk.Button(actions, text="Select sender group", command=self.select_sender_group).grid(row=0, column=2, padx=4)
         ttk.Button(actions, text="Clear selection", command=self.clear_selection).grid(row=0, column=3, padx=4)
         ttk.Button(actions, text="Review selection", command=self.review_selection).grid(row=0, column=4, padx=4)
-        ttk.Label(actions, text="Action").grid(row=0, column=5, padx=(8, 3))
-        self.action_selector = ttk.Combobox(
-            actions,
-            textvariable=self.action_var,
-            values=[label for label, _action in MAIL_ACTIONS],
-            state="readonly",
-            width=21,
-        )
-        self.action_selector.grid(row=0, column=6, padx=4)
-        ttk.Button(actions, text="Apply action", command=self.apply_selected_action).grid(row=0, column=7, padx=4)
-        ttk.Button(actions, text="Restore", command=self.restore_selected).grid(row=0, column=8, padx=4)
-        ttk.Button(actions, text="Undo", command=self.undo_last_action).grid(row=0, column=9, padx=4)
-        ttk.Button(actions, text="Recently trashed", command=self.show_recently_trashed).grid(row=0, column=10, padx=4)
+        ttk.Button(actions, text="Restore", command=self.restore_selected).grid(row=0, column=5, padx=4)
+        ttk.Button(actions, text="Undo", command=self.undo_last_action).grid(row=0, column=6, padx=4)
+        ttk.Button(actions, text="Recently trashed", command=self.show_recently_trashed).grid(row=0, column=7, padx=4)
         ttk.Label(self.root, textvariable=self.status_var, anchor="w", relief=tk.SUNKEN).grid(
             row=2, column=0, sticky="ew"
         )
@@ -254,7 +268,7 @@ class MailReviewApp:
         def worker() -> None:
             try:
                 loaded = provider.load_messages(
-                    lambda count, _total: self.load_events.put(("progress", count)),
+                    lambda count, _total, batch: self.load_events.put(("progress", count, batch)),
                     self.load_cancel,
                     self.load_pause,
                 )
@@ -271,7 +285,16 @@ class MailReviewApp:
             while True:
                 event = self.load_events.get_nowait()
                 if event[0] == "progress":
-                    self.status_var.set(f"Loaded {event[1]} messages; loading continues...")
+                    count, batch = event[1], event[2]
+                    existing = {message.message_key for message in self.messages}
+                    self.messages.extend(
+                        message for message in batch if message.message_key not in existing
+                    )
+                    self.message_index = {item.message_key: item for item in self.messages}
+                    self._refresh_groups()
+                    self._refresh_folders()
+                    self.apply_filters(clear_preview=False)
+                    self.status_var.set(f"Loaded {count} messages; loading continues...")
                 elif event[0] == "done":
                     self.load_progress.stop()
                     loaded, cancelled = event[1], event[2]
@@ -345,12 +368,22 @@ class MailReviewApp:
         self.apply_filters(clear_preview=True)
 
     def _refresh_groups(self) -> None:
+        selected_names = self._selected_group_names() if hasattr(self, "group_list") else []
         self.group_list.delete(0, tk.END)
         self.group_list.insert(tk.END, "All senders")
         for key, group in group_by_sender(self.messages).items():
             self.group_list.insert(tk.END, f"{group.sender_name} <{key}> ({group.count})")
         self.group_list.selection_clear(0, tk.END)
-        self.group_list.selection_set(0)
+        selected_indexes = []
+        for index in range(1, self.group_list.size()):
+            group_name = self.group_list.get(index).rsplit(" <", 1)[-1].split("> (", 1)[0]
+            if group_name in selected_names:
+                selected_indexes.append(index)
+        if selected_indexes:
+            for index in selected_indexes:
+                self.group_list.selection_set(index)
+        else:
+            self.group_list.selection_set(0)
 
     def _refresh_folders(self) -> None:
         values = ["All folders", *sorted({message.folder for message in self.messages})]
