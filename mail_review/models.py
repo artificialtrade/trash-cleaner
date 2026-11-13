@@ -23,6 +23,23 @@ class MessageRecord:
     received_at: datetime | None
     source: str = "offline"
     raw: dict[str, str] = field(default_factory=dict)
+    message_id: str = ""
+    thread_id: str = ""
+    is_read: bool = False
+    has_attachments: bool = False
+    body_text: str = ""
+
+    @property
+    def is_live(self) -> bool:
+        """Return whether this record represents a real mailbox message."""
+
+        return self.source == "live"
+
+    @property
+    def sender_key(self) -> str:
+        """Return the normalized sender email used for grouping."""
+
+        return self.sender_email.strip().lower()
 
     @staticmethod
     def derive_sender_parts(sender_name: str, sender_email: str) -> tuple[str, str]:

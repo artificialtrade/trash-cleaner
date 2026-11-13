@@ -7,6 +7,7 @@ from mail_review.models import MessageRecord
 
 @dataclass
 class MessageSelectionState:
+    active_account: str = "Demo"
     selected_keys: set[str] = field(default_factory=set)
     current_preview_key: str | None = None
 
@@ -22,6 +23,11 @@ class MessageSelectionState:
 
     def clear_selection(self) -> None:
         self.selected_keys.clear()
+
+    def switch_account(self, account: str) -> None:
+        self.active_account = account
+        self.clear_selection()
+        self.clear_preview()
 
     def clear_preview(self) -> None:
         self.current_preview_key = None

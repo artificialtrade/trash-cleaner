@@ -26,6 +26,15 @@ COLUMN_ALIASES = {
     "subject": "subject",
     "to": "to",
     "cc": "cc",
+    "read": "is_read",
+    "is read": "is_read",
+    "unread": "is_unread",
+    "attachments": "has_attachments",
+    "has attachments": "has_attachments",
+    "message-id": "message_id",
+    "message id": "message_id",
+    "thread-id": "thread_id",
+    "thread id": "thread_id",
 }
 
 
@@ -49,6 +58,14 @@ def _normalize_row(row: dict[str, str]) -> dict[str, str]:
     for key, value in row.items():
         normalized[key.strip().lower()] = (value or "").strip()
     return normalized
+
+
+def _as_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "read"}
+
+
+def _as_unread(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "unread"}
 
 
 def load_messages_from_csv(path: str | Path) -> list[MessageRecord]:
@@ -90,6 +107,11 @@ def load_messages_from_csv(path: str | Path) -> list[MessageRecord]:
                     received_at=received_at,
                     source="csv",
                     raw=row,
+                    message_id=mapped.get("message_id", ""),
+                    thread_id=mapped.get("thread_id", ""),
+                    is_read=_as_bool(mapped.get("is_read", ""))
+                    and not _as_unread(mapped.get("is_unread", "")),
+                    has_attachments=_as_bool(mapped.get("has_attachments", "")),
                 )
             )
     return records
