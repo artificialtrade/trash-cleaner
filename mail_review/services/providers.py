@@ -5,6 +5,7 @@ import email.utils
 import imaplib
 import json
 import os
+import shutil
 import threading
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -77,11 +78,32 @@ class GmailProvider(MailProvider):
     def _client_secret_path(self) -> Path:
         configured = os.environ.get("TRASH_CLEANER_GMAIL_CLIENT_SECRET")
         path = Path(configured) if configured else app_data_dir() / "gmail-client-secret.json"
-        if not path.exists():
-            raise RuntimeError(
-                "Gmail OAuth client secret was not found. Set "
-                "TRASH_CLEANER_GMAIL_CLIENT_SECRET or place gmail-client-secret.json in the app data folder."
-            )
+        if path.exists():
+            return path
+
+        import tkinter as tk
+        from tkinter import filedialog, messagebox
+
+        root = tk._default_root
+        messagebox.showinfo(
+            "Gmail setup required",
+            "Google OAuth needs the Desktop app client-secret JSON downloaded from Google Cloud.\n\n"
+            "Choose that JSON file in the next window. It will be copied to your local app-data folder.",
+            parent=root,
+        )
+        selected = filedialog.askopenfilename(
+            parent=root,
+            title="Select Google OAuth client-secret JSON",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if not selected:
+            raise RuntimeError("Gmail sign-in cancelled: no OAuth client-secret JSON was selected.")
+        selected_path = Path(selected)
+        try:
+            app_data_dir().mkdir(parents=True, exist_ok=True)
+            shutil.copy2(selected_path, path)
+        except OSError as error:
+            raise RuntimeError(f"Unable to copy the Gmail OAuth file to the app-data folder: {error}") from error
         return path
 
     def authenticate(self) -> str:
@@ -187,7 +209,16 @@ class OutlookProvider(MailProvider):
 
         client_id = os.environ.get("TRASH_CLEANER_OUTLOOK_CLIENT_ID")
         if not client_id:
-            raise RuntimeError("Set TRASH_CLEANER_OUTLOOK_CLIENT_ID to your Microsoft Entra public-client ID.")
+            import tkinter as tk
+            from tkinter import simpledialog
+
+            client_id = simpledialog.askstring(
+                "Outlook setup",
+                "Enter your Microsoft Entra public-client application ID:",
+                parent=tk._default_root,
+            )
+        if not client_id:
+            raise RuntimeError("Outlook sign-in cancelled: no Microsoft application ID was provided.")
         cache = msal.SerializableTokenCache()
         cached = self.credentials.get("Outlook", "msal_cache")
         if cached:

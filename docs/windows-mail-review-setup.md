@@ -44,9 +44,10 @@ The app never asks for a normal Gmail, Microsoft, or Apple password.
 
 1. In Google Cloud Console, enable the Gmail API.
 2. Create an OAuth client ID for a **Desktop app** and download its JSON file.
-3. Copy it to `%LOCALAPPDATA%\TrashCleaner\mail-review\gmail-client-secret.json`, or set
-   `TRASH_CLEANER_GMAIL_CLIENT_SECRET` to its path.
-4. Choose **Gmail** and click **Connect Account**. A Google browser sign-in window opens.
+3. Choose **Gmail** and click **Connect Account**. If the file is not already configured,
+   the app opens a file picker so you can select the downloaded JSON. It copies that file to
+   `%LOCALAPPDATA%\TrashCleaner\mail-review\gmail-client-secret.json`.
+4. A Google browser sign-in window opens. You choose your Google account and approve access.
 
 ### Outlook OAuth
 
