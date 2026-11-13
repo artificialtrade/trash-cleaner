@@ -129,6 +129,9 @@ class MailReviewApp:
             row=1, column=7, columnspan=2, padx=3, pady=(6, 0)
         )
         ttk.Label(controls, text="Bulk action").grid(row=2, column=0, padx=(3, 8), pady=(6, 0), sticky="w")
+        ttk.Button(
+            controls, text="TRASH / BIN SELECTED", command=self.trash_selected
+        ).grid(row=2, column=1, padx=3, pady=(6, 0), sticky="w")
         self.action_selector = ttk.Combobox(
             controls,
             textvariable=self.action_var,
@@ -136,18 +139,18 @@ class MailReviewApp:
             state="readonly",
             width=23,
         )
-        self.action_selector.grid(row=2, column=1, columnspan=2, padx=3, pady=(6, 0), sticky="w")
+        self.action_selector.grid(row=2, column=2, columnspan=2, padx=3, pady=(6, 0), sticky="w")
         ttk.Button(controls, text="Apply action", command=self.apply_selected_action).grid(
-            row=2, column=3, padx=3, pady=(6, 0), sticky="w"
+            row=2, column=4, padx=3, pady=(6, 0), sticky="w"
         )
         ttk.Button(controls, text="Select visible", command=self.select_all_visible).grid(
-            row=2, column=4, padx=3, pady=(6, 0)
-        )
-        ttk.Button(controls, text="Clear selection", command=self.clear_selection).grid(
             row=2, column=5, padx=3, pady=(6, 0)
         )
-        ttk.Button(controls, text="Review selection", command=self.review_selection).grid(
+        ttk.Button(controls, text="Clear selection", command=self.clear_selection).grid(
             row=2, column=6, padx=3, pady=(6, 0)
+        )
+        ttk.Button(controls, text="Review selection", command=self.review_selection).grid(
+            row=2, column=7, padx=3, pady=(6, 0)
         )
 
         splitter = ttk.Panedwindow(main_frame, orient=tk.HORIZONTAL)
@@ -212,6 +215,7 @@ class MailReviewApp:
             variable.trace_add("write", lambda *_: self.apply_filters(clear_preview=True))
         self.account_selector.bind("<<ComboboxSelected>>", self._on_account_change)
         self.group_list.bind("<<ListboxSelect>>", lambda _event: self.apply_filters(clear_preview=True))
+        self.group_list.bind("<Double-1>", self._select_group_on_double_click)
         self.message_table.bind("<<TreeviewSelect>>", self._on_message_selection)
 
     def _on_account_change(self, _event: tk.Event) -> None:
@@ -506,6 +510,13 @@ class MailReviewApp:
                     self.selection_state.select_visible(list(group.messages))
         self._populate_message_table()
         self._update_selection_label()
+
+    def _select_group_on_double_click(self, _event: tk.Event) -> None:
+        self.select_sender_group()
+
+    def trash_selected(self) -> None:
+        self.action_var.set("Move to Trash / Bin")
+        self.apply_selected_action()
 
     def clear_selection(self) -> None:
         self.selection_state.clear_selection()
