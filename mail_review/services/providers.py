@@ -8,6 +8,7 @@ import os
 import shutil
 import threading
 import webbrowser
+from json import JSONDecodeError
 from abc import ABC, abstractmethod
 from datetime import datetime
 from email.header import decode_header, make_header
@@ -109,12 +110,25 @@ class GmailProvider(MailProvider):
         from tkinter import filedialog, messagebox
 
         root = tk._default_root
-        messagebox.showinfo(
+        open_console = messagebox.askyesno(
             "Gmail setup required",
-            "Google OAuth needs the Desktop app client-secret JSON downloaded from Google Cloud.\n\n"
-            "Choose that JSON file in the next window. It will be copied to your local app-data folder.",
+            "Google OAuth needs a Desktop app client-secret JSON from Google Cloud.\n\n"
+            "Click Yes to open Google Cloud Console in your browser, or No to choose an "
+            "already-downloaded JSON file.",
             parent=root,
         )
+        if open_console:
+            webbrowser.open("https://console.cloud.google.com/apis/credentials")
+            messagebox.showinfo(
+                "Download the OAuth file",
+                "In Google Cloud Console:\n"
+                "1. Enable the Gmail API.\n"
+                "2. Create OAuth client ID → Desktop app.\n"
+                "3. Download the JSON file.\n"
+                "4. Return here and click Connect Account again.",
+                parent=root,
+            )
+            raise RuntimeError("Gmail setup paused. Download the Desktop OAuth JSON, then click Connect Account again.")
         selected = filedialog.askopenfilename(
             parent=root,
             title="Select Google OAuth client-secret JSON",
@@ -123,6 +137,15 @@ class GmailProvider(MailProvider):
         if not selected:
             raise RuntimeError("Gmail sign-in cancelled: no OAuth client-secret JSON was selected.")
         selected_path = Path(selected)
+        try:
+            data = json.loads(selected_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, JSONDecodeError) as error:
+            raise RuntimeError("That file is not valid JSON. Select the OAuth client-secret JSON downloaded from Google Cloud.") from error
+        if not isinstance(data, dict) or not (data.get("installed") or data.get("web")):
+            raise RuntimeError(
+                "That JSON is not a Google OAuth client-secret file. "
+                "Choose the downloaded Desktop app JSON from Google Cloud."
+            )
         try:
             app_data_dir().mkdir(parents=True, exist_ok=True)
             shutil.copy2(selected_path, path)
